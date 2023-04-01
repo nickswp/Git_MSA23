@@ -1,0 +1,378 @@
+---
+title: "Swiss Re Case Study"
+author: "Nick Park"
+date: "2023-03-17"
+output: html_document
+---
+# Case Study
+Please present the outcome of your analysis in the interview – in maximum 5 minutes
+Please think about: 
+If you were the successful candidate for this position – how would you proceed from this initial analysis? 
+(Consider all aspects of a data & analytics lifecycle project)
+
+You are free to make your own assumptions and/or ask key considerations to the interviewers.
+
+# Library & Data
+## Import Library
+```{r, echo = FALSE}
+library(dplyr)
+library(tidyverse)
+library(readxlsb)
+library(reshape)
+library(reshape2)
+library(lattice)
+```
+
+## Import Data
+```{r}
+data <- read.csv('Claim_DataSet_maskedv2.csv', header = TRUE,)
+
+d <- data
+```
+
+## Convert to NA & data type
+```{r}
+d[d == '#N/A'] <- NA
+d[d == ''] <- NA
+
+d$Date.of.Loss.From <- as.Date(d$Date.of.Loss.From, format = '%m/%d/%Y')
+d$Date.of.Loss.To <- as.Date(d$Date.of.Loss.To, format = '%m/%d/%Y')
+d$X.Claim.Paid.USD. <- as.numeric(d$X.Claim.Paid.USD.)
+d$X.Loss.Reserve.USD. <- as.numeric(d$X.Loss.Reserve.USD.)
+```
+
+# EDA
+## Summary
+```{r}
+summary(d)
+```
+
+## Check for NA's
+```{r}
+colSums(is.na(d))
+```
+
+# Trends - Claim Count & Incurred Loss
+## Claim count over time
+```{r}
+# year of loss
+d$year_date.of.loss <- as.numeric(format(d$Date.of.Loss.From, '%Y'))
+
+# incurred loss in USD (absolute)
+d$incurred_loss.USD <- ifelse(is.na(d$X.Claim.Paid.USD.) == TRUE, 0, d$X.Claim.Paid.USD.) + 
+  ifelse(is.na(d$X.Loss.Reserve.USD.) == TRUE, 0, d$X.Loss.Reserve.USD.)
+
+d_trend_claim.id <- d %>% 
+  group_by(year_date.of.loss, Claim.ID, Claim.Category) %>% 
+  summarise('inc.loss' = abs(sum(incurred_loss.USD, na.rm = TRUE)),
+            'paid' = abs(sum(X.Claim.Paid.USD., na.rm = TRUE))) %>% 
+  rowwise() %>%
+  mutate(reserve = sum(inc.loss, -paid, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(desc(year_date.of.loss), Claim.ID, Claim.Category) %>%
+  mutate(clm_cnt = 1) %>%
+  mutate(loss_occ = ifelse(inc.loss != 0, 1, 0))
+
+nrow(d_trend_claim.id) 
+nrow(unique(d_trend_claim.id[,1:2])) # no dupe
+```
+## open vs closed claim
+```{r}
+table(d$year_date.of.loss, d$Current.Claim.Status)
+
+```
+
+
+### Plot 1 - claim count over time (Including zero inc.loss)
+#### by category
+```{r}
+d_trend_claim.id %>% 
+  group_by(year_date.of.loss, Claim.Category) %>%
+  summarise(sum_cnt = sum(clm_cnt)) %>%
+  ungroup() %>%
+  ggplot(aes(year_date.of.loss, sum_cnt, colour = Claim.Category)) + 
+    geom_line() + 
+    theme_bw() +
+    xlab('Year') + ylab('Claim Cout') + ggtitle('Annual Claim Count by Category (Including Zero Inc.Loss)') 
+```
+### Plot 2 - claim count over time (NOT including zero inc.loss)
+#### For all categories
+```{r}
+d_trend_claim.id %>% 
+  filter(inc.loss != 0) %>%
+  group_by(year_date.of.loss) %>%
+  summarise(sum_cnt = sum(clm_cnt)) %>%
+  ungroup() %>%
+  # filter(year_date.of.loss %in% c(2013:2020)) %>%
+  ggplot(aes(year_date.of.loss, sum_cnt)) + 
+    geom_line() + 
+    theme_bw() +
+    xlab('Year') + ylab('Claim Cout') + ggtitle('Annual Claim Count (Excluding Zero Inc.Loss)')
+```
+
+#### by category
+```{r}
+d_trend_claim.id %>% 
+  filter(inc.loss != 0) %>%
+  group_by(year_date.of.loss, Claim.Category) %>%
+  summarise(sum_cnt = sum(clm_cnt)) %>%
+  ungroup() %>%
+  ggplot(aes(x = year_date.of.loss, sum_cnt, colour = Claim.Category)) + 
+    geom_line() + 
+    xlab('Accident Year') + ylab('Claim Cout') + ggtitle('Annual Claim Count by Category (Excluding Zero Inc.Loss)') +
+    theme_bw()
+```
+
+### Plot 3- Total Incurred Loss over time
+#### For all categories
+```{r}
+d_trend_claim.id %>%
+  group_by(year_date.of.loss) %>%
+  summarise(sum_loss_1k = sum(inc.loss)/1000,
+            sum_paid_1k = sum(paid)/1000,
+            sum_rsv_1k = sum(reserve)/1000) %>%
+  ungroup() %>%
+  ggplot(aes(year_date.of.loss, sum_loss_1k)) + 
+    geom_line() + 
+    xlab('Accident Year') + ylab('Inc. Loss (1,000 USD)') + ggtitle('Annual Incurred Loss') +
+    theme_bw()
+```
+
+```{r}
+d_trend_claim.id %>%
+  group_by(year_date.of.loss) %>%
+  summarise(sum_loss_1k = sum(inc.loss)/1000,
+            sum_paid_1k = sum(paid)/1000,
+            sum_rsv_1k = sum(reserve)/1000) %>%
+  ungroup() %>%
+  # filter(year_date.of.loss %in% c(2013:2020)) %>%
+  ggplot(aes(x = year_date.of.loss)) + 
+    geom_line(aes(y = sum_loss_1k, colour = 'loss')) +
+    geom_line(aes(y = sum_paid_1k, colour = 'paid')) +
+    geom_line(aes(y = sum_rsv_1k, colour = 'reserve')) +
+    xlab('Accident Year') + ylab('Inc. Loss (1,000 USD)') + ggtitle('Annual Incurred Loss') +
+    theme_bw()
+```
+
+#### By Category
+```{r}
+d_trend_claim.id %>%
+  group_by(year_date.of.loss, Claim.Category) %>%
+  summarise(sum_loss_1k = sum(inc.loss)/1000) %>%
+  ungroup() %>%
+  ggplot(aes(year_date.of.loss, sum_loss_1k, colour = Claim.Category)) + 
+    geom_line() + 
+    xlab('Accident Year') + ylab('Inc. Loss (1,000 USD)') + ggtitle('Annual Incurred Loss by Category') +
+    theme_bw()
+```
+
+### Plot 4- Average Incurred Loss per Claim Over Time
+#### For all categories
+```{r}
+d_trend_claim.id %>%
+  filter(inc.loss != 0) %>%
+  group_by(year_date.of.loss) %>%
+  summarise(loss_per_claim = sum(inc.loss)/sum(clm_cnt)) %>%
+  ungroup() %>%
+  ggplot(aes(year_date.of.loss, loss_per_claim)) + 
+    geom_line() + theme_bw() +
+    xlab('Accident Year') + ylab('Avg. Inc. Loss per Claim') + ggtitle('Annual Average Incurred Loss per Claim')
+```
+
+```{r}
+d_trend_claim.id %>%
+  filter(inc.loss != 0) %>%
+  group_by(year_date.of.loss) %>%
+  summarise(loss_per_claim = sum(inc.loss)/sum(clm_cnt)) %>%
+  ungroup() %>%
+  filter(year_date.of.loss %in% c(2013:2020)) %>%
+  ggplot(aes(year_date.of.loss, loss_per_claim)) + 
+    geom_line() + theme_bw() +
+    xlab('Accident Year') + ylab('Avg. Inc. Loss per Claim') + ggtitle('Annual Average Incurred Loss per Claim')
+```
+
+#### Two Sample T-test
+```{r}
+# 13 vs 14
+t.test(inc.loss ~ year_date.of.loss,
+       data = d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2013, 2014) & 
+                                 d_trend_claim.id$inc.loss != 0,]) # p-value = 0.3056
+
+# 14 vs 15
+t.test(inc.loss ~ year_date.of.loss,
+       data = d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2014, 2015) & 
+                                 d_trend_claim.id$inc.loss != 0,]) # p-value = 0.04967
+
+# 15 vs 16
+t.test(inc.loss ~ year_date.of.loss,
+       data = d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2015, 2016) & 
+                                 d_trend_claim.id$inc.loss != 0,]) # p-value = 6.009e-07
+
+# 16 vs 17
+t.test(inc.loss ~ year_date.of.loss,
+       data = d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2016, 2017) & 
+                                 d_trend_claim.id$inc.loss != 0,]) # p-value = 0.1552
+
+# 17 vs 18
+t.test(inc.loss ~ year_date.of.loss,
+       data = d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2017, 2018) & 
+                                 d_trend_claim.id$inc.loss != 0,]) # p-value = 0.5854
+
+# 18 vs 19
+t.test(inc.loss ~ year_date.of.loss,
+       data = d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2018, 2019) & 
+                                 d_trend_claim.id$inc.loss != 0,]) # p-value = 8.154e-05
+
+# 19 vs 20
+t.test(inc.loss ~ year_date.of.loss,
+       data = d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2019, 2020) & 
+                                 d_trend_claim.id$inc.loss != 0,]) # p-value = 1.597e-11
+
+(402.6811 - 174.2280)/174.2280
+
+table(d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2013:2020) & d_trend_claim.id$inc.loss != 0,]$year_date.of.loss)
+
+table(d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2013:2020) & d_trend_claim.id$inc.loss != 0,]$year_date.of.loss,
+      d_trend_claim.id[d_trend_claim.id$year_date.of.loss %in% c(2013:2020) & d_trend_claim.id$inc.loss != 0,]$Claim.Category)
+```
+
+
+#### By Category
+```{r}
+d_trend_claim.id %>%
+  filter(inc.loss != 0, Claim.Category != 'None', year_date.of.loss %in% c(2013:2020)) %>%
+  group_by(year_date.of.loss, Claim.Category) %>%
+  summarise(loss_per_claim = sum(inc.loss)/sum(clm_cnt)) %>%
+  ungroup() %>%
+  ggplot(aes(year_date.of.loss, loss_per_claim, colour = Claim.Category)) + 
+    geom_line() + 
+    xlab('Accident Year') + ylab('Avg. Inc. Loss per Claim') + ggtitle('Annual Average Incurred Loss per Claim by Category') +
+    theme_bw()
+```
+
+### Plot 4 (2) - Box Plot of Inc.Loss/Claim over the years
+```{r}
+d_trend_claim.id %>%
+  filter(inc.loss != 0, year_date.of.loss %in% c(2013:2020)) %>%
+  ggplot(aes(year_date.of.loss, inc.loss, group = year_date.of.loss)) + 
+    geom_boxplot() + 
+    xlab('Accident Year') + ylab('Inc. Loss per Claim') + ggtitle('Annual Incurred Loss per Claim') + 
+    theme_bw()
+```
+
+
+
+
+### Plot 4 (3) - Box Plot of Inc.Loss/Claim over the years by Category
+```{r}
+d_trend_claim.id %>%
+  filter(inc.loss != 0) %>% 
+  ggplot(aes(year_date.of.loss, inc.loss, group = year_date.of.loss)) + 
+    geom_boxplot() + 
+    xlab('Accident Year') + ylab('Inc. Loss per Claim') + ggtitle('Annual Incurred Loss per Claim by Category') + 
+    theme_bw() +
+    facet_wrap(~ Claim.Category, scales = "fixed")
+```
+
+
+
+# Data Quality
+## Claim Count by Client
+```{r}
+d$row_cnt <- 1
+clm_cnt_by_client <- d %>% group_by(Client.Name) %>% summarise('clm_cnt' = sum(row_cnt)) %>% arrange(desc(clm_cnt))
+
+summary(clm_cnt_by_client$clm_cnt)
+sd(clm_cnt_by_client$clm_cnt)
+
+ggplot(clm_cnt_by_client[1:20,], aes(reorder(Client.Name, clm_cnt), clm_cnt)) + 
+  geom_col() + coord_flip() +
+  xlab('Client Name') + ylab('Claim Count') + ggtitle('Claim Count by Client (Top 20)')
+```
+
+## Incurred Loss by Client 
+```{r}
+nrow(d[d$incurred_loss.USD > 0,])
+nrow(d[d$incurred_loss.USD < 0,])
+```
+
+```{r}
+summary(abs(d[d$incurred_loss.USD != 0,]$incurred_loss.USD)) # exclude 0
+sd(abs(d[d$incurred_loss.USD != 0,]$incurred_loss.USD))
+
+ggplot(d[d$incurred_loss.USD != 0,], aes(x = abs(incurred_loss.USD))) + geom_boxplot() +
+  xlab('Incurred Loss (UDS)') + ggtitle('Boxplot of Non-zero Inc. Loss')
+```
+
+# Data Quality - Claim Limit & Exceeds Cat Limit
+## Null 'Claim.Category.Limit.in.USD' by client
+Client 2053 seems to be an issue
+```{r}
+d$claim_limit_na <- ifelse(is.na(d$Claim.Category.Limit.in.USD) == TRUE, 1, 0)
+sum(d$claim_limit_na ==1)
+
+null_client.name <- d %>% filter(claim_limit_na == 1) %>%
+  group_by(Client.Name) %>% summarise('null_count' = sum(claim_limit_na)) %>% 
+  arrange(desc(null_count)) %>% head(15)
+
+ggplot(null_client.name, aes(reorder(Client.Name, null_count), null_count)) + 
+  geom_col() + coord_flip() +
+  xlab('Clinet Name') + ylab('Null "Claim.Category.Limit.in.USD" Count') + ggtitle('Null Count of Claim Category Limit by Client') + theme_bw()
+```
+
+## Null 'Inc...Exceeds.Cat.Limit.Flag' by client
+Client 2053 seems to be an issue (again)
+```{r}
+d$cat_limit_na <- ifelse(is.na(d$Inc...Exceeds.Cat.Limit.Flag) == TRUE, 1, 0)
+sum(d$cat_limit_na == 1)
+
+null_cat.limit <- d %>% filter(cat_limit_na == 1) %>%
+  group_by(Client.Name) %>% summarise('null_count' = sum(cat_limit_na)) %>% 
+  arrange(desc(null_count)) %>% head(15)
+
+ggplot(null_cat.limit, aes(reorder(Client.Name, null_count), null_count)) + 
+  geom_col() + coord_flip() +
+  xlab('Clinet Name') + ylab('Null "Inc...Exceeds.Cat.Limit.Flag" Count') + ggtitle('Null Count of Exceeds Cat Limti Flag by Client') + theme_bw()
+```
+
+## Which team is responsible? - Client 2053 Only
+Team S
+```{r}
+# d$claim_limit_na <- ifelse(is.na(d$Claim.Category.Limit.in.USD) == TRUE, 1, 0)
+
+null_team_client2053 <- d %>% filter(claim_limit_na == 1, Client.Name == 'Client 2053') %>%
+  group_by(Claim.Team) %>% summarise('null_count' = sum(claim_limit_na)) %>% 
+  arrange(desc(null_count)) %>% head(15)
+
+ggplot(null_team_client2053, aes(reorder(Claim.Team, null_count), null_count)) + 
+  geom_col() + coord_flip() +
+  xlab('Team Name') + ylab('Null "Claim.Category.Limit.in.USD" Count') + ggtitle('Null Count by Team (Client 2053)')
+```
+
+## Null value by team
+```{r}
+# d$claim_limit_na <- ifelse(is.na(d$Claim.Category.Limit.in.USD) == TRUE, 1, 0)
+
+null_team <- d %>% filter(claim_limit_na == 1) %>%
+  group_by(Claim.Team, Client.Name) %>% summarise('null_count' = sum(claim_limit_na))
+
+ggplot(null_team, aes(reorder(Claim.Team, null_count), null_count)) + 
+  geom_col() + coord_flip() +
+  xlab('Team Name') + ylab('Null "Claim.Category.Limit.in.USD" Count') + ggtitle('Null Count by Team')
+```
+
+## When did the loss occur?
+```{r}
+null_limit_overtime <- d %>% filter(claim_limit_na == 1) %>%
+  mutate(year_date.of.loss = as.numeric(format(Date.of.Loss.From, '%Y'))) %>%
+  group_by(year_date.of.loss, Claim.Team) %>% summarise('null_count' = sum(claim_limit_na)) %>% 
+  arrange(year_date.of.loss)
+
+ggplot(null_limit_overtime, aes(year_date.of.loss, null_count, colour = Claim.Team)) + geom_line() + 
+  xlab('Accident Year') + ylab('Null "Claim.Category.Limit.in.USD" Count') + ggtitle('Annual Null Count by Team') + theme_bw()
+```
+
+```{r}
+max()
+```
+
